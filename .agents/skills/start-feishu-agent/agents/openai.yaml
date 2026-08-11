@@ -1,0 +1,4 @@
+interface:
+  display_name: "启动飞书 Agent"
+  short_description: "Start and monitor the local Feishu Agent"
+  default_prompt: "Use $start-feishu-agent to start the local Feishu Agent and monitor its connection logs."
