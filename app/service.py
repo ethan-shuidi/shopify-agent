@@ -41,3 +41,17 @@ class ChatService:
             logger.exception("Agent failed while handling message_id=%s", message.message_id)
             return "本地 Agent 暂时处理失败，请检查模型配置或稍后重试。"
 
+    def needs_thinking_status(self, message: IncomingMessage) -> bool:
+        """Whether handling the message will require a model request."""
+        if not should_handle(message):
+            return False
+
+        text = normalize_user_text(message.text)
+        return bool(text) and text.lower() not in {
+            "/help",
+            "help",
+            "帮助",
+            "/reset",
+            "reset",
+            "清空会话",
+        }

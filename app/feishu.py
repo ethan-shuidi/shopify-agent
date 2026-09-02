@@ -5,6 +5,10 @@ from typing import Any
 
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import (
+    CreateMessageReactionRequest,
+    CreateMessageReactionRequestBody,
+    DeleteMessageReactionRequest,
+    Emoji,
     P2ImMessageReceiveV1,
     ReplyMessageRequest,
     ReplyMessageRequestBody,
@@ -63,11 +67,17 @@ class FeishuGateway:
         self.executor.submit(self._process_and_reply, message)
 
     def _process_and_reply(self, message: IncomingMessage) -> None:
+        thinking_reaction_id = None
+        if self.service.needs_thinking_status(message):
+            thinking_reaction_id = self.add_thinking_reaction(message.message_id)
+
         answer = self.service.handle(message)
         if answer:
             self.reply(message.message_id, answer)
+        if thinking_reaction_id:
+            self.remove_reaction(message.message_id, thinking_reaction_id)
 
-    def reply(self, message_id: str, text: str) -> None:
+    def reply(self, message_id: str, text: str) -> str | None:
         request = (
             ReplyMessageRequest.builder()
             .message_id(message_id)
@@ -83,6 +93,54 @@ class FeishuGateway:
         if not response.success():
             logger.error(
                 "Feishu reply failed: code=%s msg=%s log_id=%s",
+                response.code,
+                response.msg,
+                response.get_log_id(),
+            )
+            return None
+        return getattr(getattr(response, "data", None), "message_id", None)
+
+    def add_thinking_reaction(self, message_id: str) -> str | None:
+        try:
+            request = (
+                CreateMessageReactionRequest.builder()
+                .message_id(message_id)
+                .request_body(
+                    CreateMessageReactionRequestBody.builder()
+                    .reaction_type(Emoji.builder().emoji_type("THINKING").build())
+                    .build()
+                )
+                .build()
+            )
+            response = self.api_client.im.v1.message_reaction.create(request)
+        except Exception:
+            logger.exception("Failed to add Feishu thinking reaction")
+            return None
+        if not response.success():
+            logger.error(
+                "Feishu thinking reaction failed: code=%s msg=%s log_id=%s",
+                response.code,
+                response.msg,
+                response.get_log_id(),
+            )
+            return None
+        return getattr(getattr(response, "data", None), "reaction_id", None)
+
+    def remove_reaction(self, message_id: str, reaction_id: str) -> None:
+        try:
+            request = (
+                DeleteMessageReactionRequest.builder()
+                .message_id(message_id)
+                .reaction_id(reaction_id)
+                .build()
+            )
+            response = self.api_client.im.v1.message_reaction.delete(request)
+        except Exception:
+            logger.exception("Failed to remove Feishu thinking reaction")
+            return
+        if not response.success():
+            logger.warning(
+                "Feishu thinking reaction cleanup failed: code=%s msg=%s log_id=%s",
                 response.code,
                 response.msg,
                 response.get_log_id(),
@@ -117,4 +175,3 @@ def _to_incoming_message(data: P2ImMessageReceiveV1) -> IncomingMessage | None:
 
 def _lark_log_level(level: str) -> lark.LogLevel:
     return getattr(lark.LogLevel, level.upper(), lark.LogLevel.INFO)
-

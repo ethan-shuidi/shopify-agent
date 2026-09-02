@@ -42,9 +42,19 @@ def test_message_reaches_responder(tmp_path) -> None:
     assert service.handle(message("你好")) == "agent answer: user:ou_1: 你好"
 
 
+def test_thinking_status_only_for_model_requests(tmp_path) -> None:
+    memory = SQLiteMemory(tmp_path / "agent.db")
+    memory.initialize()
+    service = ChatService(FakeResponder(), memory)
+
+    assert service.needs_thinking_status(message("你好")) is True
+    assert service.needs_thinking_status(message("/help")) is False
+    assert service.needs_thinking_status(message("/reset")) is False
+    assert service.needs_thinking_status(message("你好", chat_type="group")) is False
+
+
 def test_unmentioned_group_message_is_ignored(tmp_path) -> None:
     memory = SQLiteMemory(tmp_path / "agent.db")
     memory.initialize()
     service = ChatService(FakeResponder(), memory)
     assert service.handle(message("你好", chat_type="group")) is None
-
