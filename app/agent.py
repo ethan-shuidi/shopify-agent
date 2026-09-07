@@ -8,7 +8,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from app.config import Settings
 from app.memory import ConversationMessage, SQLiteMemory
-from app.prompts import SYSTEM_PROMPT
+from app.prompts import build_system_prompt
 
 
 class AgentResponder(Protocol):
@@ -19,7 +19,18 @@ class PydanticAgentResponder:
     def __init__(self, settings: Settings, memory: SQLiteMemory, memory_limit: int = 12) -> None:
         self.memory = memory
         self.memory_limit = memory_limit
-        self.agent = Agent(build_model(settings), system_prompt=SYSTEM_PROMPT)
+        code_repo_enabled = settings.code_repo_path is not None
+        system_prompt = build_system_prompt(code_repo_enabled=code_repo_enabled)
+        self.agent = Agent(build_model(settings), system_prompt=system_prompt)
+
+        if settings.code_repo_path:
+            from app.tools import register_code_tools
+
+            register_code_tools(
+                self.agent,
+                settings.code_repo_path,
+                settings.code_repo_allowed_extensions,
+            )
 
     def respond(self, session_id: str, user_text: str) -> str:
         history = self.memory.recent(session_id, self.memory_limit)

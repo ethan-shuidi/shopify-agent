@@ -37,6 +37,25 @@ class Settings(BaseSettings):
     agent_max_workers: int = Field(default=4, validation_alias="AGENT_MAX_WORKERS")
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
 
+    code_repo_path: Path | None = Field(default=None, validation_alias="CODE_REPO_PATH")
+    code_repo_file_extensions: str = Field(
+        default=".py,.js,.ts,.jsx,.tsx,.liquid,.json,.html,.css,.scss,.yml,.yaml,.toml,.md,.txt,.graphql,.env.example",
+        validation_alias="CODE_REPO_FILE_EXTENSIONS",
+    )
+
+    @property
+    def code_repo_allowed_extensions(self) -> frozenset[str]:
+        return frozenset(
+            ext.strip() for ext in self.code_repo_file_extensions.split(",") if ext.strip()
+        )
+
+    @field_validator("code_repo_path")
+    @classmethod
+    def repo_path_must_exist(cls, value: Path | None) -> Path | None:
+        if value is not None and not value.is_dir():
+            raise ValueError(f"CODE_REPO_PATH directory does not exist: {value}")
+        return value
+
     @field_validator("feishu_app_id", "feishu_app_secret")
     @classmethod
     def credentials_must_not_be_blank(cls, value: str) -> str:

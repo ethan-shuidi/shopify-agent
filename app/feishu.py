@@ -78,13 +78,20 @@ class FeishuGateway:
             self.remove_reaction(message.message_id, thinking_reaction_id)
 
     def reply(self, message_id: str, text: str) -> str | None:
+        card = {
+            "schema": "2.0",
+            "body": {
+                "direction": "vertical",
+                "elements": [{"tag": "markdown", "content": text}],
+            },
+        }
         request = (
             ReplyMessageRequest.builder()
             .message_id(message_id)
             .request_body(
                 ReplyMessageRequestBody.builder()
-                .msg_type("text")
-                .content(json.dumps({"text": text}, ensure_ascii=False))
+                .msg_type("interactive")
+                .content(json.dumps(card, ensure_ascii=False))
                 .build()
             )
             .build()
