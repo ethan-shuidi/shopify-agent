@@ -1,4 +1,6 @@
 import os
+import re
+import subprocess
 from pathlib import Path
 
 SKIP_DIRS = frozenset({
@@ -125,6 +127,24 @@ def search_repo_files(
     if not matches:
         return f"没有找到匹配 '{pattern}' 的文件。"
     return "\n".join(matches)
+
+
+def switch_repo_branch(repo_root: Path, branch: str) -> str:
+    if not re.fullmatch(r"[a-zA-Z0-9._\-/]+", branch):
+        return f"分支名不合法: {branch}"
+    root = repo_root.resolve()
+    try:
+        subprocess.run(
+            ["git", "checkout", branch],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=15,
+        )
+    except subprocess.CalledProcessError as exc:
+        return f"切换分支失败: {exc.stderr.strip()}"
+    return f"已切换到分支: {branch}"
 
 
 def grep_repo(

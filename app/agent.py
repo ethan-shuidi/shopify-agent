@@ -3,6 +3,7 @@ from typing import Protocol
 
 from openai import AsyncOpenAI
 from pydantic_ai import Agent
+from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -12,7 +13,7 @@ from app.prompts import build_system_prompt
 
 
 class AgentResponder(Protocol):
-    def respond(self, session_id: str, user_text: str) -> str: ...
+    def respond(self, session_id: str, user_text: str, image_bytes: bytes | None = None) -> str: ...
 
 
 class PydanticAgentResponder:
@@ -32,9 +33,17 @@ class PydanticAgentResponder:
                 settings.code_repo_allowed_extensions,
             )
 
-    def respond(self, session_id: str, user_text: str) -> str:
+        from app.tools import register_klaviyo_tools
+
+        register_klaviyo_tools(self.agent)
+
+        from app.tools import register_shopify_tools
+
+        register_shopify_tools(self.agent)
+
+    def respond(self, session_id: str, user_text: str, image_bytes: bytes | None = None) -> str:
         history = self.memory.recent(session_id, self.memory_limit)
-        prompt = _build_prompt(history, user_text)
+        prompt = _build_prompt(history, user_text, image_bytes)
         result = self.agent.run_sync(prompt)
 
         # PydanticAI 1.x exposes output; this fallback keeps 0.x upgrades painless.
@@ -75,11 +84,22 @@ def build_model(settings: Settings) -> OpenAIChatModel | OpenAIResponsesModel:
     return OpenAIChatModel(model_name, provider=provider)
 
 
-def _build_prompt(history: Sequence[ConversationMessage], user_text: str) -> str:
-    if not history:
-        return user_text
+def _build_prompt(
+    history: Sequence[ConversationMessage], user_text: str, image_bytes: bytes | None = None,
+) -> str | list:
+    parts: list = []
 
-    rendered_history = "\n".join(
-        f"{'用户' if item.role == 'user' else '助手'}：{item.content}" for item in history
-    )
-    return f"以下是当前会话最近的对话：\n{rendered_history}\n\n用户的新消息：{user_text}"
+    if history:
+        rendered_history = "\n".join(
+            f"{'用户' if item.role == 'user' else '助手'}：{item.content}" for item in history
+        )
+        parts.append(f"以下是当前会话最近的对话：\n{rendered_history}\n\n用户的新消息：{user_text}")
+    else:
+        parts.append(user_text)
+
+    if image_bytes:
+        parts.append(BinaryContent(data=image_bytes, media_type="image/png"))
+
+    if len(parts) == 1 and isinstance(parts[0], str):
+        return parts[0]
+    return parts

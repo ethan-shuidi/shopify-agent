@@ -1,14 +1,18 @@
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import (
+    CreateFileRequest,
+    CreateFileRequestBody,
     CreateMessageReactionRequest,
     CreateMessageReactionRequestBody,
     DeleteMessageReactionRequest,
     Emoji,
+    GetImageRequest,
     P2ImMessageReceiveV1,
     ReplyMessageRequest,
     ReplyMessageRequestBody,
@@ -16,7 +20,7 @@ from lark_oapi.api.im.v1 import (
 
 from app.config import Settings
 from app.memory import SQLiteMemory
-from app.messages import IncomingMessage, parse_text_content
+from app.messages import IncomingMessage, parse_image_key, parse_post_content, parse_text_content
 from app.service import ChatService
 
 logger = logging.getLogger(__name__)
@@ -58,12 +62,25 @@ class FeishuGateway:
         websocket_client.start()
 
     def _on_message(self, data: P2ImMessageReceiveV1) -> None:
-        message = _to_incoming_message(data)
-        if message is None:
+        result = _to_incoming_message(data)
+        if result is None:
             return
+        message, image_key = result
         if not self.memory.claim_event(message.message_id):
             logger.info("Ignoring duplicate message_id=%s", message.message_id)
             return
+        if image_key:
+            image_bytes = self.download_image(image_key)
+            if image_bytes:
+                message = IncomingMessage(
+                    message_id=message.message_id,
+                    chat_id=message.chat_id,
+                    chat_type=message.chat_type,
+                    sender_id=message.sender_id,
+                    text=message.text,
+                    has_mentions=message.has_mentions,
+                    image_bytes=image_bytes,
+                )
         self.executor.submit(self._process_and_reply, message)
 
     def _process_and_reply(self, message: IncomingMessage) -> None:
@@ -74,6 +91,18 @@ class FeishuGateway:
         answer = self.service.handle(message)
         if answer:
             self.reply(message.message_id, answer)
+
+        from app.tools.klaviyo import pop_pending_file
+
+        pending_file = pop_pending_file()
+        if pending_file and pending_file.is_file():
+            file_key = self.upload_file(pending_file, pending_file.name)
+            if file_key:
+                self.reply_file(message.message_id, file_key, pending_file.name)
+            import shutil
+
+            shutil.rmtree(pending_file.parent, ignore_errors=True)
+
         if thinking_reaction_id:
             self.remove_reaction(message.message_id, thinking_reaction_id)
 
@@ -133,6 +162,75 @@ class FeishuGateway:
             return None
         return getattr(getattr(response, "data", None), "reaction_id", None)
 
+    def upload_file(self, file_path: Path, file_name: str) -> str | None:
+        try:
+            with open(file_path, "rb") as f:
+                request = (
+                    CreateFileRequest.builder()
+                    .request_body(
+                        CreateFileRequestBody.builder()
+                        .file_type("stream")
+                        .file_name(file_name)
+                        .file(f)
+                        .build()
+                    )
+                    .build()
+                )
+                response = self.api_client.im.v1.file.create(request)
+        except Exception:
+            logger.exception("Failed to upload file %s", file_path)
+            return None
+        if not response.success():
+            logger.error(
+                "Feishu file upload failed: code=%s msg=%s log_id=%s",
+                response.code,
+                response.msg,
+                response.get_log_id(),
+            )
+            return None
+        return getattr(getattr(response, "data", None), "file_key", None)
+
+    def reply_file(self, message_id: str, file_key: str, file_name: str) -> str | None:
+        content = json.dumps({"file_key": file_key})
+        request = (
+            ReplyMessageRequest.builder()
+            .message_id(message_id)
+            .request_body(
+                ReplyMessageRequestBody.builder()
+                .msg_type("file")
+                .content(content)
+                .build()
+            )
+            .build()
+        )
+        response = self.api_client.im.v1.message.reply(request)
+        if not response.success():
+            logger.error(
+                "Feishu file reply failed: code=%s msg=%s log_id=%s",
+                response.code,
+                response.msg,
+                response.get_log_id(),
+            )
+            return None
+        return getattr(getattr(response, "data", None), "message_id", None)
+
+    def download_image(self, image_key: str) -> bytes | None:
+        try:
+            request = GetImageRequest.builder().image_key(image_key).build()
+            response = self.api_client.im.v1.image.get(request)
+        except Exception:
+            logger.exception("Failed to download Feishu image %s", image_key)
+            return None
+        if not response.success():
+            logger.error(
+                "Feishu image download failed: code=%s msg=%s log_id=%s",
+                response.code,
+                response.msg,
+                response.get_log_id(),
+            )
+            return None
+        return response.file.read()
+
     def remove_reaction(self, message_id: str, reaction_id: str) -> None:
         try:
             request = (
@@ -154,13 +252,14 @@ class FeishuGateway:
             )
 
 
-def _to_incoming_message(data: P2ImMessageReceiveV1) -> IncomingMessage | None:
+def _to_incoming_message(data: P2ImMessageReceiveV1) -> tuple[IncomingMessage, str | None] | None:
     event: Any = getattr(data, "event", None)
     message: Any = getattr(event, "message", None)
     sender: Any = getattr(event, "sender", None)
     sender_id: Any = getattr(sender, "sender_id", None)
 
-    if message is None or getattr(message, "message_type", "") != "text":
+    msg_type = getattr(message, "message_type", "")
+    if message is None or msg_type not in {"text", "post", "image"}:
         return None
 
     message_id = getattr(message, "message_id", "")
@@ -169,15 +268,26 @@ def _to_incoming_message(data: P2ImMessageReceiveV1) -> IncomingMessage | None:
         logger.warning("Ignoring malformed Feishu message event")
         return None
 
+    raw_content = getattr(message, "content", "")
+    image_key = None
+    if msg_type == "post":
+        text = parse_post_content(raw_content)
+    elif msg_type == "image":
+        text = "（用户发送了一张图片）"
+        image_key = parse_image_key(raw_content)
+    else:
+        text = parse_text_content(raw_content)
+
     mentions = getattr(message, "mentions", None) or []
-    return IncomingMessage(
+    incoming = IncomingMessage(
         message_id=message_id,
         chat_id=getattr(message, "chat_id", ""),
         chat_type=getattr(message, "chat_type", ""),
         sender_id=open_id,
-        text=parse_text_content(getattr(message, "content", "")),
+        text=text,
         has_mentions=bool(mentions),
     )
+    return incoming, image_key
 
 
 def _lark_log_level(level: str) -> lark.LogLevel:

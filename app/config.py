@@ -37,6 +37,19 @@ class Settings(BaseSettings):
     agent_max_workers: int = Field(default=4, validation_alias="AGENT_MAX_WORKERS")
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
 
+    ga4_property_us: str = Field(default="544454580", validation_alias="GA4_PROPERTY_US")
+    ga4_property_jp: str = Field(default="549454928", validation_alias="GA4_PROPERTY_JP")
+    ga4_property_eu: str = Field(default="554019883", validation_alias="GA4_PROPERTY_EU")
+    ga4_token_path: Path = Field(default=Path("data/ga4-token.json"), validation_alias="GA4_TOKEN_PATH")
+    ga4_oauth_client_path: Path = Field(default=Path("data/ga4-oauth-client.json"), validation_alias="GA4_OAUTH_CLIENT_PATH")
+
+    shopify_client_id: str = Field(default="", validation_alias="SHOPIFY_CLIENT_ID")
+    shopify_client_secret: SecretStr = Field(default=SecretStr(""), validation_alias="SHOPIFY_CLIENT_SECRET")
+
+    klaviyo_api_key_us: SecretStr = Field(default=SecretStr(""), validation_alias="KLAVIYO_API_KEY_US")
+    klaviyo_api_key_jp: SecretStr = Field(default=SecretStr(""), validation_alias="KLAVIYO_API_KEY_JP")
+    klaviyo_api_key_eu: SecretStr = Field(default=SecretStr(""), validation_alias="KLAVIYO_API_KEY_EU")
+
     code_repo_path: Path | None = Field(default=None, validation_alias="CODE_REPO_PATH")
     code_repo_file_extensions: str = Field(
         default=".py,.js,.ts,.jsx,.tsx,.liquid,.json,.html,.css,.scss,.yml,.yaml,.toml,.md,.txt,.graphql,.env.example",

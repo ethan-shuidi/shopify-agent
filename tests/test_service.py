@@ -9,7 +9,7 @@ from app.service import ChatService
 class FakeResponder:
     answer: str = "agent answer"
 
-    def respond(self, session_id: str, user_text: str) -> str:
+    def respond(self, session_id: str, user_text: str, image_bytes: bytes | None = None) -> str:
         return f"{self.answer}: {session_id}: {user_text}"
 
 

@@ -36,7 +36,7 @@ class ChatService:
             return "请在 @我 后面写上你的问题。"
 
         try:
-            return self.responder.respond(message.session_id, text)
+            return self.responder.respond(message.session_id, text, message.image_bytes)
         except Exception:
             logger.exception("Agent failed while handling message_id=%s", message.message_id)
             return "本地 Agent 暂时处理失败，请检查模型配置或稍后重试。"
